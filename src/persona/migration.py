@@ -75,16 +75,24 @@ def detect_migration(profile_a: Dict[str, Any], profile_b: Dict[str, Any], posts
     sem_a = profile_a.get('semantic', {})
     sem_b = profile_b.get('semantic', {})
     if sem_a and sem_b:
-        emb_a = sem_a.get('centroid_embedding', [])
-        emb_b = sem_b.get('centroid_embedding', [])
+        emb_a = sem_a.get('corpus_centroid') or sem_a.get('centroid_embedding', [])
+        emb_b = sem_b.get('corpus_centroid') or sem_b.get('centroid_embedding', [])
         if emb_a and emb_b:
             from sklearn.metrics.pairwise import cosine_similarity
             import numpy as np
             va = np.array(emb_a).reshape(1, -1)
             vb = np.array(emb_b).reshape(1, -1)
-            semantic_sim = float(cosine_similarity(va, vb)[0][0])
+            if np.any(va) and np.any(vb):
+                semantic_sim = float(cosine_similarity(va, vb)[0][0])
         else:
             limitations.append("Semantic centroid embeddings missing.")
+            
+        topics_a = sem_a.get('topics', {})
+        topics_b = sem_b.get('topics', {})
+        if topics_a and topics_b:
+            from ..semantic.topics import topic_overlap
+            topic_res = topic_overlap(topics_a, topics_b)
+            topic_sim = topic_res.get('topic_similarity', 0.0)
     else:
         limitations.append("Semantic data missing.")
         
@@ -98,17 +106,18 @@ def detect_migration(profile_a: Dict[str, Any], profile_b: Dict[str, Any], posts
     signals = {
         'style_similarity': style_sim,
         'semantic_similarity': semantic_sim,
-        'behavior_similarity': behavior_sim,
+        'behavioral_association': behavior_sim,
         'temporal_association': temporal_association,
         'topic_similarity': topic_sim
     }
     
     score = sum(signals.values()) / 5.0
-    detected = score > 0.6 and temporal_association > 0.5
+    detected = score > 0.5 or (style_sim > 0.6 and semantic_sim > 0.6)
     
     return {
         'detected': detected,
         'candidate_personas': [profile_a.get('persona_id', 'A'), profile_b.get('persona_id', 'B')],
+        'similarity_score': score,
         'signals': signals,
         'temporal_gap': {
             'a_last_active': get_ts_str(a_last) if a_last else None,
